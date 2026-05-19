@@ -1,0 +1,33 @@
+# Rust
+/target
+**/target/
+Cargo.lock
+**/*.rs.bk
+
+# Go
+services/api/bin/
+*.exe
+*.out
+
+# Node / TypeScript
+node_modules/
+sdk/typescript/dist/
+sdk/typescript/.turbo/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+dist/
