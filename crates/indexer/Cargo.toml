@@ -1,0 +1,16 @@
+[package]
+name = "trident-indexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trident-common = { path = "../common" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.11", features = ["json"] }
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono"] }
+redis = { version = "0.24", features = ["tokio-comp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio-retry = "0.3"
