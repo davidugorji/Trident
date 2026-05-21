@@ -25,6 +25,8 @@ pub struct SorobanEvent {
     pub data: serde_json::Value,
     /// Ledger sequence number in which this event was emitted.
     pub ledger_sequence: u64,
+    /// ISO 8601 UTC timestamp of the ledger close.
+    pub ledger_timestamp: String,
     /// Hash of the transaction that emitted this event.
     pub transaction_hash: String,
     /// Zero-based index of this event within its transaction.

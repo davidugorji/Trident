@@ -5,12 +5,45 @@ edition = "2021"
 
 [dependencies]
 trident-common = { path = "../common" }
+
+# Async runtime
 tokio = { version = "1", features = ["full"] }
+
+# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP client for Stellar RPC JSON-RPC calls
 reqwest = { version = "0.11", features = ["json"] }
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono"] }
+
+# Database
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono", "json"] }
+
+# Redis
 redis = { version = "0.24", features = ["tokio-comp"] }
+
+# Stellar XDR decoding — pin to a specific protocol version via the "curr" feature
+# If the network upgrades to a new protocol, update this version accordingly.
+stellar-xdr = { version = "0.0.19", features = ["curr"] }
+
+# Strkey encoding for contract and account addresses
+stellar-strkey = "0.0.8"
+
+# Base64 decoding for XDR payloads
+base64 = "0.22"
+
+# Serialisation
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# UUIDs for event primary keys
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Hex encoding for bytes values
+hex = "0.4"
+
+# Retry logic with exponential backoff
 tokio-retry = "0.3"
