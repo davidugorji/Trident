@@ -1,12 +1,11 @@
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
-// Proto-generated code will live here once the .proto files are defined.
-// Each RPC service gets its own module under src/services/.
-//
-// Example layout once protos are added:
-//   pub mod trident { tonic::include_proto!("trident"); }
-//   mod services { pub mod events; }
+pub mod trident {
+    tonic::include_proto!("trident");
+}
+
+mod services;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,12 +19,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(%addr, "Trident gRPC server listening");
 
-    // TODO: implement the EventsService trait generated from protos
-    // TODO: register service with tonic::transport::Server
-    // TODO: add tls_config if TLS is required
+    let events_service = services::events::EventsServiceImpl::new();
 
     tonic::transport::Server::builder()
-        // .add_service(EventsServer::new(EventsService::new(db, redis)))
+        .add_service(trident::events_server::EventsServer::new(events_service))
         .serve(addr)
         .await?;
 
