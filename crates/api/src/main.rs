@@ -1,0 +1,30 @@
+use std::net::SocketAddr;
+use tracing_subscriber::EnvFilter;
+
+pub mod trident {
+    tonic::include_proto!("trident");
+}
+
+mod services;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
+    let addr: SocketAddr = std::env::var("GRPC_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:50051".into())
+        .parse()?;
+
+    tracing::info!(%addr, "Trident gRPC server listening");
+
+    let events_service = services::events::EventsServiceImpl::new();
+
+    tonic::transport::Server::builder()
+        .add_service(trident::events_server::EventsServer::new(events_service))
+        .serve(addr)
+        .await?;
+
+    Ok(())
+}

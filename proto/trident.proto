@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package trident;
+
+// ---------------------------------------------------------------------------
+// EventsService
+//
+// The gRPC interface between the Rust core and the Go front office.
+// The Go API layer calls these RPCs to serve developer-facing REST, GraphQL,
+// and WebSocket endpoints. Direct developer access to this service is not
+// intended — it is an internal transport boundary.
+// ---------------------------------------------------------------------------
+service Events {
+  // Return a paginated list of historical events matching the filter.
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+
+  // Return a single event by its UUID primary key.
+  rpc GetEvent(GetEventRequest) returns (Event);
+
+  // Server-side streaming RPC: subscribe to real-time events for a contract.
+  // The server pushes each new matching event as it is indexed.
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+}
+
+// ---------------------------------------------------------------------------
+// Core message types
+// ---------------------------------------------------------------------------
+
+message Event {
+  // UUID primary key as assigned by PostgreSQL.
+  string id = 1;
+
+  // Strkey-encoded contract address (C...).
+  string contract_id = 2;
+
+  // Ledger sequence number in which this event was emitted.
+  uint64 ledger_sequence = 3;
+
+  // ISO 8601 UTC timestamp of the ledger close.
+  string ledger_timestamp = 4;
+
+  // Hash of the transaction that emitted this event.
+  string transaction_hash = 5;
+
+  // Zero-based index of this event within its transaction.
+  uint32 event_index = 6;
+
+  // "contract" | "system" | "diagnostic"
+  string event_type = 7;
+
+  // Decoded topic values in order. Serialised from ScVal to string.
+  repeated string topics = 8;
+
+  // Decoded event body as a JSON string. Complex types are serialised
+  // recursively; i128/u128 values outside i64 range are JSON strings.
+  string data = 9;
+
+  // Row insertion timestamp (server time, not ledger time).
+  string created_at = 10;
+}
+
+// ---------------------------------------------------------------------------
+// ListEvents
+// ---------------------------------------------------------------------------
+
+message ListEventsRequest {
+  // Filter by contract address. Empty string means all contracts.
+  string contract_id = 1;
+
+  // Filter by the value of the first topic (e.g. "transfer").
+  string topic_0 = 2;
+
+  // Filter by the value of the second topic.
+  string topic_1 = 3;
+
+  // Inclusive lower bound on ledger sequence.
+  uint64 ledger_from = 4;
+
+  // Inclusive upper bound on ledger sequence. 0 means no upper bound.
+  uint64 ledger_to = 5;
+
+  // Opaque cursor from the previous response. Empty string on first call.
+  string cursor = 6;
+
+  // Maximum number of events to return. Capped server-side at 200.
+  uint32 limit = 7;
+}
+
+message ListEventsResponse {
+  repeated Event events = 1;
+
+  // Pass this as `cursor` on the next call to fetch the next page.
+  // Empty string when there are no more results.
+  string next_cursor = 2;
+
+  bool has_more = 3;
+}
+
+// ---------------------------------------------------------------------------
+// GetEvent
+// ---------------------------------------------------------------------------
+
+message GetEventRequest {
+  // UUID of the event to fetch.
+  string id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// StreamEvents
+// ---------------------------------------------------------------------------
+
+message StreamEventsRequest {
+  // Contract address to subscribe to. Required.
+  string contract_id = 1;
+
+  // Optional topic_0 filter — only events whose first topic matches are pushed.
+  string topic_0 = 2;
+}
