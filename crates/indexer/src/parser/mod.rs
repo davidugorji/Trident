@@ -15,7 +15,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::Value as Json;
 use stellar_strkey::{ed25519, Contract};
 use stellar_xdr::curr::{
-    AccountId, Hash, Limited, Limits, PublicKey, ReadXdr, ScAddress, ScVal,
+    AccountId, ContractId, Limited, Limits, PublicKey, ReadXdr, ScAddress, ScVal,
 };
 use trident_common::{EventType, SorobanEvent, TridentError};
 
@@ -38,6 +38,11 @@ impl Parser {
         let event_type = parse_event_type(&raw.event_type)?;
 
         if event_type == EventType::Diagnostic && !self.index_diagnostic {
+            return Ok(None);
+        }
+
+        // Skip events emitted by failed contract calls — they have no observable effect.
+        if !raw.in_successful_contract_call {
             return Ok(None);
         }
 
@@ -169,9 +174,7 @@ pub fn scval_to_json(val: &ScVal) -> Json {
         }
         ScVal::Bytes(b) => Json::String(hex::encode(b.as_slice())),
         ScVal::Address(addr) => Json::String(scaddress_to_string(addr)),
-        ScVal::Vec(Some(items)) => {
-            Json::Array(items.iter().map(scval_to_json).collect())
-        }
+        ScVal::Vec(Some(items)) => Json::Array(items.iter().map(scval_to_json).collect()),
         ScVal::Vec(None) => Json::Array(vec![]),
         ScVal::Map(Some(entries)) => {
             let obj: serde_json::Map<String, Json> = entries
@@ -188,8 +191,13 @@ pub fn scval_to_json(val: &ScVal) -> Json {
 fn scaddress_to_string(addr: &ScAddress) -> String {
     match addr {
         ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(bytes))) => {
-            ed25519::PublicKey(bytes.0).to_string()
+            // stellar-strkey 0.0.16+ returns heapless::String — convert to std::String
+            ed25519::PublicKey(bytes.0).to_string().as_str().to_owned()
         }
-        ScAddress::Contract(Hash(bytes)) => Contract(*bytes).to_string(),
+        // stellar-xdr 26.x wraps the hash in ContractId; the inner Hash holds [u8; 32]
+        ScAddress::Contract(ContractId(hash)) => Contract(hash.0).to_string().as_str().to_owned(),
+        // stellar-xdr 26.x added MuxedAccount, ClaimableBalance, LiquidityPool variants;
+        // these do not appear in Soroban contract events but the match must be exhaustive.
+        other => format!("{other:?}"),
     }
 }

@@ -24,10 +24,10 @@ redis = { version = "0.24", features = ["tokio-comp"] }
 
 # Stellar XDR decoding — pin to a specific protocol version via the "curr" feature
 # If the network upgrades to a new protocol, update this version accordingly.
-stellar-xdr = { version = "0.0.19", features = ["curr"] }
+stellar-xdr = { version = "26.0.1", features = ["curr"] }
 
 # Strkey encoding for contract and account addresses
-stellar-strkey = "0.0.8"
+stellar-strkey = "0.0.16"
 
 # Base64 decoding for XDR payloads
 base64 = "0.22"

@@ -14,3 +14,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-build = "0.11"
+protoc-bin-vendored = "3"

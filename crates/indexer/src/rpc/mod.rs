@@ -109,10 +109,7 @@ impl RpcClient {
         let params = GetEventsParams {
             start_ledger,
             filters: vec![],
-            pagination: Pagination {
-                limit: 200,
-                cursor,
-            },
+            pagination: Pagination { limit: 200, cursor },
         };
 
         let req = JsonRpcRequest {

@@ -42,8 +42,7 @@ impl Events for EventsServiceImpl {
         Err(Status::unimplemented("get_event not yet implemented"))
     }
 
-    type StreamEventsStream =
-        tokio_stream::wrappers::ReceiverStream<Result<Event, Status>>;
+    type StreamEventsStream = tokio_stream::wrappers::ReceiverStream<Result<Event, Status>>;
 
     /// Stream real-time events for a contract from Redis Streams.
     async fn stream_events(

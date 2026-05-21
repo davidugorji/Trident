@@ -21,13 +21,7 @@ use sqlx::PgPool;
 use tokio_retry::{strategy::ExponentialBackoff, Retry};
 use trident_common::TridentError;
 
-use crate::{
-    config::Config,
-    db,
-    parser::Parser,
-    redis_stream,
-    rpc::RpcClient,
-};
+use crate::{config::Config, db, parser::Parser, redis_stream, rpc::RpcClient};
 
 pub struct Streamer {
     config: Config,
@@ -38,14 +32,16 @@ pub struct Streamer {
 }
 
 impl Streamer {
-    pub fn new(
-        config: Config,
-        db: PgPool,
-        redis: redis::aio::MultiplexedConnection,
-    ) -> Self {
+    pub fn new(config: Config, db: PgPool, redis: redis::aio::MultiplexedConnection) -> Self {
         let rpc = RpcClient::new(config.stellar_rpc_url.clone());
         let parser = Parser::new(config.index_diagnostic);
-        Self { config, db, redis, rpc, parser }
+        Self {
+            config,
+            db,
+            redis,
+            rpc,
+            parser,
+        }
     }
 
     /// Start the polling loop. Runs indefinitely — spawn with `tokio::spawn`
@@ -87,13 +83,13 @@ impl Streamer {
             .max_delay(Duration::from_secs(30))
             .take(5);
 
-        // Use start_ledger on the very first call (cursor == 0), then switch
-        // to paging_token-based cursor for all subsequent pages.
-        let start_ledger = if *cursor == 0 { None } else { None };
-        let initial_cursor = if *cursor > 0 {
-            Some(cursor.to_string())
+        // First-ever run: anchor to ledger 1 via start_ledger.
+        // All subsequent calls use paging_token cursors so the RPC can resume
+        // exactly where we left off without re-scanning from genesis.
+        let (start_ledger, initial_cursor) = if *cursor == 0 {
+            (Some(1u64), None)
         } else {
-            None
+            (None, Some(cursor.to_string()))
         };
 
         let mut page_cursor = initial_cursor;
@@ -107,25 +103,28 @@ impl Streamer {
             })
             .await?;
 
+            tracing::debug!(
+                latest_ledger = page.latest_ledger,
+                cursor = *cursor,
+                "RPC page received"
+            );
+
             if page.events.is_empty() {
                 break;
             }
 
-            let last_paging_token = page
-                .events
-                .last()
-                .map(|e| e.paging_token.clone());
+            let last_paging_token = page.events.last().map(|e| e.paging_token.clone());
 
+            let mut events_in_page: i32 = 0;
             for raw in &page.events {
                 match self.parser.parse_event(raw) {
                     Ok(Some(event)) => {
                         db::insert_event(&self.db, &event).await?;
                         redis_stream::publish_event(&mut self.redis, &event).await?;
                         total += 1;
+                        events_in_page += 1;
                     }
-                    Ok(None) => {
-                        // Diagnostic event skipped — index_diagnostic is false
-                    }
+                    Ok(None) => {} // diagnostic or failed-call event — intentionally skipped
                     Err(e) => {
                         tracing::warn!(
                             tx_hash = %raw.tx_hash,
@@ -136,17 +135,26 @@ impl Streamer {
                 }
             }
 
-            // Advance the persistent cursor to the last processed ledger
-            let last_ledger = page.events.last().map(|e| e.ledger.parse::<u64>().unwrap_or(*cursor));
-            if let Some(seq) = last_ledger {
+            // Advance the persistent cursor and record ledger metadata.
+            if let Some(last) = page.events.last() {
+                let seq: u64 = last.ledger.parse().unwrap_or(*cursor);
                 if seq > *cursor {
                     *cursor = seq;
                     db::set_cursor(&self.db, *cursor).await?;
+                    // Ledger hash is not available from getEvents; record what we have.
+                    // TODO: enrich with ledger hash via getLedger RPC when needed.
+                    db::insert_ledger_metadata(
+                        &self.db,
+                        seq,
+                        "",
+                        &last.ledger_closed_at,
+                        events_in_page,
+                    )
+                    .await?;
                 }
             }
 
-            // If a full page was returned there may be more — keep paginating.
-            // An incomplete page means we've caught up to the chain tip.
+            // An incomplete page means we have caught up to the chain tip.
             if page.events.len() < 200 {
                 break;
             }
