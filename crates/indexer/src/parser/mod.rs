@@ -254,10 +254,19 @@ mod tests {
         let to = ScVal::Address(ScAddress::Account(AccountId(
             PublicKey::PublicKeyTypeEd25519(Uint256([2u8; 32])),
         )));
-        let amount = ScVal::I128(Int128Parts { hi: 0, lo: 1_000_000 });
+        let amount = ScVal::I128(Int128Parts {
+            hi: 0,
+            lo: 1_000_000,
+        });
 
         let contract_id = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
-        let raw = make_event("contract", Some(contract_id), vec![sym("transfer"), from, to], amount, true);
+        let raw = make_event(
+            "contract",
+            Some(contract_id),
+            vec![sym("transfer"), from, to],
+            amount,
+            true,
+        );
 
         let parser = Parser::new(false);
         let event = parser.parse_event(&raw).unwrap().unwrap();
@@ -276,7 +285,13 @@ mod tests {
         )));
         let amount = ScVal::I128(Int128Parts { hi: 0, lo: 5_000 });
 
-        let raw = make_event("contract", Some("CONTRACT"), vec![sym("mint"), to], amount, true);
+        let raw = make_event(
+            "contract",
+            Some("CONTRACT"),
+            vec![sym("mint"), to],
+            amount,
+            true,
+        );
 
         let parser = Parser::new(false);
         let event = parser.parse_event(&raw).unwrap().unwrap();
@@ -303,7 +318,10 @@ mod tests {
         let parser = Parser::new(false);
         let event = parser.parse_event(&raw).unwrap().unwrap();
 
-        let obj = event.data.as_object().expect("data should be a JSON object");
+        let obj = event
+            .data
+            .as_object()
+            .expect("data should be a JSON object");
         assert_eq!(obj["amount"], serde_json::json!(100u64));
         assert_eq!(obj["fee"], serde_json::json!(1u64));
     }
@@ -342,7 +360,13 @@ mod tests {
     fn contract_address_topic_decoded_to_strkey() {
         let contract_hash = [0xABu8; 32];
         let addr = ScVal::Address(ScAddress::Contract(ContractId(Hash(contract_hash))));
-        let raw = make_event("contract", None, vec![sym("event"), addr], ScVal::Void, true);
+        let raw = make_event(
+            "contract",
+            None,
+            vec![sym("event"), addr],
+            ScVal::Void,
+            true,
+        );
 
         let parser = Parser::new(false);
         let event = parser.parse_event(&raw).unwrap().unwrap();
@@ -352,6 +376,10 @@ mod tests {
             "contract strkey must start with C, got: {}",
             event.topics[1]
         );
-        assert_eq!(event.topics[1].len(), 56, "contract strkey must be 56 chars");
+        assert_eq!(
+            event.topics[1].len(),
+            56,
+            "contract strkey must be 56 chars"
+        );
     }
 }
