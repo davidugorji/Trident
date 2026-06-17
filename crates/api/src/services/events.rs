@@ -442,7 +442,6 @@ mod tests {
     #[tokio::test]
     async fn get_unknown_uuid_returns_not_found() {
         let (db_url, redis_url) = require_services!();
-        let pool = PgPool::connect(&db_url).await.unwrap();
         let svc = make_svc(&db_url, &redis_url).await;
 
         let req = Request::new(GetEventRequest {
@@ -456,7 +455,6 @@ mod tests {
     #[tokio::test]
     async fn get_malformed_uuid_returns_invalid_argument() {
         let (db_url, redis_url) = require_services!();
-        let pool = PgPool::connect(&db_url).await.unwrap();
         let svc = make_svc(&db_url, &redis_url).await;
 
         let req = Request::new(GetEventRequest {
