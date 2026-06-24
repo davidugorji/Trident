@@ -16,7 +16,7 @@ RUN mkdir -p crates/common/src crates/api/src crates/indexer/src \
     && echo "pub fn _stub() {}" > crates/common/src/lib.rs \
     && echo "fn main() {}"      > crates/api/src/main.rs \
     && echo "fn main() {}"      > crates/indexer/src/main.rs \
-    && cargo build --release -p trident-api 2>/dev/null || true
+    && cargo build --release -p trident-api
 
 COPY . .
 
