@@ -131,10 +131,7 @@ func TestHub_SlowClientDropsMessage(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-		// correct — broadcast returned without blocking
-	}
+	<-done
 
 	// Only the pre-filled message should be in the channel.
 	if len(c.send) != 1 {

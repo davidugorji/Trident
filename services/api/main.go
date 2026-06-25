@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Depo-dev/trident/services/api/handlers"
+	"github.com/Depo-dev/trident/services/api/middleware"
 	"github.com/Depo-dev/trident/services/api/ws"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
@@ -34,7 +35,11 @@ func main() {
 			slog.Warn("could not connect to database; health endpoint will return 503", "err", err)
 		} else {
 			dbConn = conn
-			defer conn.Close(context.Background())
+			defer func() {
+				if err := conn.Close(context.Background()); err != nil {
+					slog.Debug("database connection close failed", "err", err)
+				}
+			}()
 		}
 	} else {
 		slog.Warn("DATABASE_URL not set; health endpoint will return 503")
@@ -78,12 +83,16 @@ func main() {
 	// GET /v1/events/{id} — single event by UUID v4 (issue #42)
 	mux.HandleFunc("GET /v1/events/{id}", handlers.GetEvent)
 
+	mux.HandleFunc("GET /v1/events/stream", handlers.Stream(redisClient))
+
 	// WebSocket: /ws — real-time event subscription endpoint (issue #15)
 	mux.HandleFunc("/ws", ws.Handler(hub))
 
+	handler := middleware.APIKey(mux)
+
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", port),
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
