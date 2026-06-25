@@ -6,10 +6,23 @@ use sqlx::PgPool;
 use trident_common::{EventType, SorobanEvent, TridentError};
 use uuid::Uuid;
 
-/// Insert a normalised event. Silently ignores duplicates (same tx_hash + event_index)
-/// because the streamer may replay events during cursor recovery.
+// Stable namespace for deterministic event UUIDs (UUIDv5).
+// Using the DNS namespace is arbitrary; what matters is that it is fixed.
+const EVENT_NS: Uuid = Uuid::NAMESPACE_DNS;
+
+/// Derive a deterministic UUID for an event from its natural key.
+/// Using the same inputs will always produce the same UUID, so duplicate
+/// events produce the same `id` and `ON CONFLICT (id) DO NOTHING` fires.
+fn event_uuid(contract_id: &str, ledger_sequence: u64, event_index: u32) -> Uuid {
+    let key = format!("{contract_id}:{ledger_sequence}:{event_index}");
+    Uuid::new_v5(&EVENT_NS, key.as_bytes())
+}
+
+/// Insert a normalised event. Silently ignores duplicates via `ON CONFLICT (id) DO NOTHING`.
+/// The `id` is a deterministic UUIDv5 derived from `(contract_id, ledger_sequence, event_index)`,
+/// so replaying the same event always produces the same primary key.
 pub async fn insert_event(pool: &PgPool, event: &SorobanEvent) -> Result<(), TridentError> {
-    let id = Uuid::new_v4();
+    let id = event_uuid(&event.contract_id, event.ledger_sequence, event.event_index);
     let event_type = match event.event_type {
         EventType::Contract => "contract",
         EventType::System => "system",
@@ -28,7 +41,7 @@ pub async fn insert_event(pool: &PgPool, event: &SorobanEvent) -> Result<(), Tri
             (id, contract_id, ledger_sequence, ledger_timestamp, transaction_hash,
              event_index, event_type, topics, data)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (transaction_hash, event_index) DO NOTHING
+        ON CONFLICT (id) DO NOTHING
         "#,
     )
     .bind(id)
@@ -158,4 +171,58 @@ pub async fn load_indexed_contracts(
     .map_err(|e| TridentError::StorageError(format!("load_indexed_contracts: {e}")))?;
 
     Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sqlx::PgPool;
+    use trident_common::{EventType, SorobanEvent};
+
+    fn make_event(contract_id: &str, ledger_sequence: u64, event_index: u32) -> SorobanEvent {
+        SorobanEvent {
+            contract_id: contract_id.to_string(),
+            ledger_sequence,
+            ledger_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            transaction_hash: "txhash_abc123".to_string(),
+            event_index,
+            event_type: EventType::Contract,
+            topics: vec![],
+            data: json!({}),
+        }
+    }
+
+    /// Deterministic UUID: same inputs must produce the same id.
+    #[test]
+    fn event_uuid_is_deterministic() {
+        let a = event_uuid("CABC", 100, 0);
+        let b = event_uuid("CABC", 100, 0);
+        assert_eq!(a, b);
+    }
+
+    /// Different natural keys must produce different UUIDs.
+    #[test]
+    fn event_uuid_varies_with_inputs() {
+        let a = event_uuid("CABC", 100, 0);
+        let b = event_uuid("CABC", 100, 1);
+        assert_ne!(a, b);
+    }
+
+    /// Calling `insert_event` twice with the same event must not error and
+    /// the row count in `soroban_events` must remain 1.
+    #[sqlx::test(migrations = "../../../database/migrations")]
+    async fn insert_event_is_idempotent(pool: PgPool) {
+        let event = make_event("CABC_CONTRACT_001", 42, 0);
+
+        insert_event(&pool, &event).await.expect("first insert failed");
+        insert_event(&pool, &event).await.expect("second insert must not error");
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM soroban_events")
+            .fetch_one(&pool)
+            .await
+            .expect("count query failed");
+
+        assert_eq!(count.0, 1, "duplicate insert should be silently ignored");
+    }
 }
