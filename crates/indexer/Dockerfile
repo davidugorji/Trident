@@ -1,38 +1,39 @@
 # syntax=docker/dockerfile:1
 
 # ── builder ──────────────────────────────────────────────────────────────────
-FROM rust:1.78-slim AS builder
+FROM rust:1.81-slim AS builder
 
-WORKDIR /app
+WORKDIR /build
 
-# Cache dependency fetch separately from source compilation.
+# Install build-time system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace manifest and lock file first to allow layer caching
 COPY Cargo.toml Cargo.lock ./
-COPY proto/ proto/
-COPY crates/common/Cargo.toml crates/common/Cargo.toml
-COPY crates/api/Cargo.toml    crates/api/Cargo.toml
-COPY crates/indexer/Cargo.toml crates/indexer/Cargo.toml
 
-RUN mkdir -p crates/common/src crates/api/src crates/indexer/src \
-    && echo "pub fn _stub() {}" > crates/common/src/lib.rs \
-    && echo "fn main() {}"      > crates/api/src/main.rs \
-    && echo "fn main() {}"      > crates/indexer/src/main.rs \
-    && cargo build --release -p trident-indexer
+# Copy all crates so Cargo can resolve the workspace
+COPY crates/ ./crates/
 
-COPY . .
-
+# Build only the indexer binary in release mode
 RUN cargo build --release -p trident-indexer
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    libpq5 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN adduser --system --uid 1001 trident
+RUN useradd -u 1001 -m -s /bin/sh trident
 
-COPY --from=builder /app/target/release/trident-indexer /usr/local/bin/trident-indexer
+COPY --from=builder /build/target/release/trident-indexer /app/trident-indexer
 
 USER trident
 
-ENTRYPOINT ["/usr/local/bin/trident-indexer"]
+ENTRYPOINT ["/app/trident-indexer"]
