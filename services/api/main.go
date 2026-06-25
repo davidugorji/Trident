@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/Depo-dev/trident/services/api/handlers"
+	"github.com/Depo-dev/trident/services/api/ws"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -20,8 +22,9 @@ func main() {
 		port = "3000"
 	}
 
-	// Open a single Postgres connection for the health endpoint.
-	// DATABASE_URL must be set; if absent, the health endpoint returns 503.
+	// ---------------------------------------------------------------------------
+	// Postgres connection (health endpoint)
+	// ---------------------------------------------------------------------------
 	var dbConn *pgx.Conn
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -37,43 +40,46 @@ func main() {
 		slog.Warn("DATABASE_URL not set; health endpoint will return 503")
 	}
 
-	mux := http.NewServeMux()
+	// ---------------------------------------------------------------------------
+	// Redis client
+	// ---------------------------------------------------------------------------
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379"
+	}
+	redisOpts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		slog.Error("invalid REDIS_URL", "err", err)
+		os.Exit(1)
+	}
+	redisClient := redis.NewClient(redisOpts)
 
 	// ---------------------------------------------------------------------------
-	// REST router
+	// WebSocket hub + Redis Streams consumer
 	// ---------------------------------------------------------------------------
+	hub := ws.NewHub()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go ws.StartConsumer(ctx, redisClient, hub)
+
+	// ---------------------------------------------------------------------------
+	// HTTP router
+	// ---------------------------------------------------------------------------
+	mux := http.NewServeMux()
 
 	// GET /v1/health — indexer liveness (issue #62)
 	mux.HandleFunc("GET /v1/health", handlers.Health(dbConn))
 
-	// GET /v1/events — list events with validated query params (issue #42)
+	// GET /v1/events — validated, cursor-paginated event listing (issues #42, #44)
 	mux.HandleFunc("GET /v1/events", handlers.ListEvents)
 
-	// GET /v1/events/{id} — get single event by UUID v4 (issue #42)
+	// GET /v1/events/{id} — single event by UUID v4 (issue #42)
 	mux.HandleFunc("GET /v1/events/{id}", handlers.GetEvent)
 
-	// ---------------------------------------------------------------------------
-	// GraphQL handler
-	// Mount the GraphQL endpoint here, e.g. using gqlgen:
-	//   srv := handler.NewDefaultServer(generated.NewExecutableSchema(cfg))
-	//   mux.Handle("/graphql", srv)
-	//   mux.Handle("/playground", playground.Handler("Trident", "/graphql"))
-	// ---------------------------------------------------------------------------
-
-	// ---------------------------------------------------------------------------
-	// WebSocket handler
-	// Mount the WebSocket subscription endpoint here. Clients subscribe to a
-	// contract address and receive a stream of SorobanEvent JSON objects in
-	// real time as they land on-chain.
-	//   mux.HandleFunc("/ws", ws.Handler(redisClient))
-	// ---------------------------------------------------------------------------
-
-	// ---------------------------------------------------------------------------
-	// Redis Streams consumer
-	// Start the background consumer here. It reads from the Redis Stream written
-	// by the Rust indexer and fans out to connected WebSocket clients.
-	//   go consumer.Start(ctx, redisClient, hub)
-	// ---------------------------------------------------------------------------
+	// WebSocket: /ws — real-time event subscription endpoint (issue #15)
+	mux.HandleFunc("/ws", ws.Handler(hub))
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", port),
@@ -82,9 +88,6 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		slog.Info("Trident API server listening", "port", port)

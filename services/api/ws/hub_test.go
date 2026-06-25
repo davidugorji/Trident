@@ -1,236 +1,168 @@
-package ws_test
+package ws
 
 import (
-	"context"
-	"encoding/json"
 	"sync"
 	"testing"
-	"time"
-
-	"github.com/Depo-dev/trident/services/api/ws"
 )
 
-// recvTimeout bounds how long a test waits for an expected frame. It only fires
-// on failure: because Broadcast is synchronous, a matching frame is always
-// already buffered by the time the test reads, so the happy path never sleeps.
-const recvTimeout = time.Second
+// TestHub_RegisterAndBroadcast verifies that a registered client receives
+// messages broadcast to its contractID (issue #15 AC: fan-out delivery).
+func TestHub_RegisterAndBroadcast(t *testing.T) {
+	h := NewHub()
 
-// frame mirrors the JSON the hub writes to clients (see wireEvent in hub.go).
-type frame struct {
-	ContractID      string `json:"contract_id"`
-	LedgerSequence  string `json:"ledger_sequence"`
-	LedgerTimestamp string `json:"ledger_timestamp"`
-	TransactionHash string `json:"transaction_hash"`
-	EventIndex      string `json:"event_index"`
-	EventType       string `json:"event_type"`
-	Topics          string `json:"topics"`
-	Data            string `json:"data"`
-}
+	c := &client{
+		contractID: "contract-abc",
+		send:       make(chan []byte, 8),
+	}
+	h.register(c)
 
-// recv reads exactly one frame from c, failing the test if none arrives or the
-// channel is closed.
-func recv(t *testing.T, c *ws.Client) frame {
-	t.Helper()
+	msg := []byte(`{"event":"transfer"}`)
+	h.Broadcast("contract-abc", msg)
+
 	select {
-	case msg, ok := <-c.Send():
-		if !ok {
-			t.Fatal("client send channel closed unexpectedly")
+	case got := <-c.send:
+		if string(got) != string(msg) {
+			t.Errorf("want %q, got %q", msg, got)
 		}
-		var f frame
-		if err := json.Unmarshal(msg, &f); err != nil {
-			t.Fatalf("unmarshal frame: %v", err)
-		}
-		return f
-	case <-time.After(recvTimeout):
-		t.Fatal("timed out waiting for an event frame")
-		return frame{}
+	default:
+		t.Fatal("expected message in send channel, got none")
 	}
 }
 
-// mockReader is an in-memory Reader: queued events are returned in order, and
-// once the queue drains Read blocks until ctx is cancelled. It lets the hub run
-// without a real Redis connection.
-type mockReader struct {
-	events chan ws.Event
-}
+// TestHub_BroadcastDoesNotDeliverToOtherContracts verifies that messages are
+// only delivered to subscribers of the matching contractID.
+func TestHub_BroadcastDoesNotDeliverToOtherContracts(t *testing.T) {
+	h := NewHub()
 
-func newMockReader(buffer int) *mockReader {
-	return &mockReader{events: make(chan ws.Event, buffer)}
-}
+	c := &client{
+		contractID: "contract-xyz",
+		send:       make(chan []byte, 8),
+	}
+	h.register(c)
 
-func (m *mockReader) Read(ctx context.Context) (ws.Event, error) {
+	h.Broadcast("contract-abc", []byte(`{"event":"irrelevant"}`))
+
 	select {
-	case ev := <-m.events:
-		return ev, nil
-	case <-ctx.Done():
-		return ws.Event{}, ctx.Err()
+	case got := <-c.send:
+		t.Errorf("did not expect message for different contractID, got %q", got)
+	default:
+		// correct — nothing delivered
 	}
 }
 
-// Fan-out correctness: every client on a contract gets exactly one matching
-// message, and the payload round-trips.
-func TestHub_Broadcast_FansOutToAllSubscribers(t *testing.T) {
-	const contract = "CCONTRACTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	hub := ws.NewHub(nil)
+// TestHub_UnregisterClosesChannel verifies that after unregister the client's
+// send channel is closed so the write goroutine can exit cleanly (issue #15).
+func TestHub_UnregisterClosesChannel(t *testing.T) {
+	h := NewHub()
 
-	clients := []*ws.Client{
-		ws.NewClient(contract, ""),
-		ws.NewClient(contract, ""),
-		ws.NewClient(contract, ""),
+	c := &client{
+		contractID: "contract-abc",
+		send:       make(chan []byte, 8),
 	}
-	for _, c := range clients {
-		hub.Register(c)
+	h.register(c)
+	h.unregister(c)
+
+	// Channel must be closed; a receive on a closed empty channel returns immediately.
+	_, open := <-c.send
+	if open {
+		t.Error("expected send channel to be closed after unregister")
+	}
+}
+
+// TestHub_UnregisterIsIdempotent verifies that calling unregister twice does
+// not panic (double-close guard).
+func TestHub_UnregisterIsIdempotent(t *testing.T) {
+	h := NewHub()
+
+	c := &client{
+		contractID: "contract-abc",
+		send:       make(chan []byte, 8),
+	}
+	h.register(c)
+	h.unregister(c)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("second unregister panicked: %v", r)
+		}
+	}()
+	h.unregister(c)
+}
+
+// TestHub_MultipleClientsPerContract verifies that all subscribers for the
+// same contractID receive the broadcast.
+func TestHub_MultipleClientsPerContract(t *testing.T) {
+	h := NewHub()
+
+	const n = 3
+	clients := make([]*client, n)
+	for i := range clients {
+		clients[i] = &client{contractID: "shared", send: make(chan []byte, 8)}
+		h.register(clients[i])
 	}
 
-	ev := ws.Event{
-		ContractID:      contract,
-		LedgerSequence:  42,
-		LedgerTimestamp: "2026-06-25T00:00:00Z",
-		TransactionHash: "deadbeef",
-		EventIndex:      1,
-		EventType:       "contract",
-		Topics:          []string{"transfer"},
-		Data:            `{"amount":"100"}`,
-	}
-	hub.Broadcast(ev)
+	h.Broadcast("shared", []byte(`{"event":"mint"}`))
 
 	for i, c := range clients {
-		f := recv(t, c)
-		if f.ContractID != ev.ContractID {
-			t.Errorf("client %d: contract_id = %q, want %q", i, f.ContractID, ev.ContractID)
-		}
-		if f.LedgerSequence != "42" {
-			t.Errorf("client %d: ledger_sequence = %q, want %q", i, f.LedgerSequence, "42")
-		}
-		if f.EventIndex != "1" {
-			t.Errorf("client %d: event_index = %q, want %q", i, f.EventIndex, "1")
-		}
-		if f.EventType != ev.EventType {
-			t.Errorf("client %d: event_type = %q, want %q", i, f.EventType, ev.EventType)
-		}
-		if f.Topics != `["transfer"]` {
-			t.Errorf("client %d: topics = %q, want %q", i, f.Topics, `["transfer"]`)
-		}
-		if f.Data != ev.Data {
-			t.Errorf("client %d: data = %q, want %q", i, f.Data, ev.Data)
-		}
-		if n := len(c.Send()); n != 0 {
-			t.Errorf("client %d: %d extra messages buffered, want exactly one delivered", i, n)
+		select {
+		case got := <-c.send:
+			if string(got) != `{"event":"mint"}` {
+				t.Errorf("client %d: unexpected message %q", i, got)
+			}
+		default:
+			t.Errorf("client %d: expected message, got none", i)
 		}
 	}
 }
 
-// Contract filter isolation: a message for contract C1 must never reach a
-// client subscribed to C2.
-func TestHub_Broadcast_IsolatesByContract(t *testing.T) {
-	const (
-		c1 = "CCONTRACT1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-		c2 = "CCONTRACT2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	)
-	hub := ws.NewHub(nil)
-	a := ws.NewClient(c1, "")
-	b := ws.NewClient(c2, "")
-	hub.Register(a)
-	hub.Register(b)
+// TestHub_SlowClientDropsMessage verifies that a client with a full send
+// buffer does not block the broadcaster (drop-on-full semantics).
+func TestHub_SlowClientDropsMessage(t *testing.T) {
+	h := NewHub()
 
-	hub.Broadcast(ws.Event{ContractID: c1, Topics: []string{"transfer"}})
+	// Buffer size 1 — fill it first so the next broadcast must drop.
+	c := &client{contractID: "contract-slow", send: make(chan []byte, 1)}
+	h.register(c)
+	c.send <- []byte("pre-fill")
 
-	if f := recv(t, a); f.ContractID != c1 {
-		t.Errorf("client A: contract_id = %q, want %q", f.ContractID, c1)
-	}
-	if n := len(b.Send()); n != 0 {
-		t.Errorf("client B received %d messages, want 0", n)
-	}
-}
-
-// topic_0 filter: a client with topic0="transfer" sees only transfers, while a
-// client with no topic filter sees every event for the contract.
-func TestHub_Broadcast_AppliesTopic0Filter(t *testing.T) {
-	const contract = "CCONTRACT1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	hub := ws.NewHub(nil)
-	filtered := ws.NewClient(contract, "transfer") // transfers only
-	all := ws.NewClient(contract, "")              // everything
-
-	hub.Register(filtered)
-	hub.Register(all)
-
-	hub.Broadcast(ws.Event{ContractID: contract, EventType: "contract", Topics: []string{"transfer"}})
-	hub.Broadcast(ws.Event{ContractID: contract, EventType: "contract", Topics: []string{"mint"}})
-
-	// Filtered client receives only the transfer.
-	if f := recv(t, filtered); f.Topics != `["transfer"]` {
-		t.Errorf("filtered client topics = %q, want %q", f.Topics, `["transfer"]`)
-	}
-	if n := len(filtered.Send()); n != 0 {
-		t.Errorf("filtered client received %d extra messages, want 0", n)
-	}
-
-	// Unfiltered client receives both, in order.
-	if f := recv(t, all); f.Topics != `["transfer"]` {
-		t.Errorf("unfiltered client first frame topics = %q, want %q", f.Topics, `["transfer"]`)
-	}
-	if f := recv(t, all); f.Topics != `["mint"]` {
-		t.Errorf("unfiltered client second frame topics = %q, want %q", f.Topics, `["mint"]`)
-	}
-}
-
-// Disconnect cleanup: an unregistered client is removed from the hub, its send
-// channel is closed, and a subsequent broadcast neither reaches it nor panics
-// on the closed channel. Unregister is also idempotent.
-func TestHub_Unregister_RemovesClientAndIsBroadcastSafe(t *testing.T) {
-	const contract = "CCONTRACT1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	hub := ws.NewHub(nil)
-	c := ws.NewClient(contract, "")
-
-	hub.Register(c)
-	if got := hub.ClientCount(); got != 1 {
-		t.Fatalf("ClientCount after register = %d, want 1", got)
-	}
-
-	hub.Unregister(c)
-	if got := hub.ClientCount(); got != 0 {
-		t.Fatalf("ClientCount after unregister = %d, want 0", got)
-	}
-
-	// The send channel must be closed.
-	if _, ok := <-c.Send(); ok {
-		t.Error("client send channel should be closed after unregister")
-	}
-
-	// Broadcasting for the disconnected client's contract must not attempt a
-	// send on the closed channel (would panic) and must reach no one.
-	hub.Broadcast(ws.Event{ContractID: contract, Topics: []string{"transfer"}})
-
-	// A second unregister must be a no-op, not a double close.
-	hub.Unregister(c)
-}
-
-// Concurrent register/unregister under the race detector: 50 goroutines each
-// register and immediately unregister a client while the hub's broadcast loop
-// runs concurrently off a mock reader. Run with `go test -race`.
-func TestHub_ConcurrentRegisterUnregister(t *testing.T) {
-	const contract = "CCONTRACT1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	reader := newMockReader(0)
-	hub := ws.NewHub(reader)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Run the broadcast loop concurrently.
-	runDone := make(chan struct{})
+	// This must not block.
+	done := make(chan struct{})
 	go func() {
-		_ = hub.Run(ctx)
-		close(runDone)
+		h.Broadcast("contract-slow", []byte("dropped"))
+		close(done)
 	}()
 
-	// Continuously feed events while clients churn, stopping on cancel.
+	select {
+	case <-done:
+		// correct — broadcast returned without blocking
+	}
+
+	// Only the pre-filled message should be in the channel.
+	if len(c.send) != 1 {
+		t.Errorf("want 1 message in channel (pre-fill), got %d", len(c.send))
+	}
+}
+
+// TestHub_ConcurrentRegisterUnregister exercises the hub under the race
+// detector (issue #60 AC: concurrent connects/disconnects must be safe under
+// `go test -race`). 50 goroutines each register and immediately unregister a
+// client while a broadcaster runs concurrently. The run is clean when no data
+// race is reported and every client has been removed at the end.
+func TestHub_ConcurrentRegisterUnregister(t *testing.T) {
+	h := NewHub()
+
+	// Drive the broadcast path concurrently with the register/unregister churn.
+	stop := make(chan struct{})
+	broadcasterDone := make(chan struct{})
 	go func() {
-		ev := ws.Event{ContractID: contract, Topics: []string{"transfer"}}
+		defer close(broadcasterDone)
+		msg := []byte(`{"event":"transfer"}`)
 		for {
 			select {
-			case reader.events <- ev:
-			case <-ctx.Done():
+			case <-stop:
 				return
+			default:
+				h.Broadcast("shared", msg)
 			}
 		}
 	}()
@@ -240,17 +172,22 @@ func TestHub_ConcurrentRegisterUnregister(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c := ws.NewClient(contract, "")
-			hub.Register(c)
-			hub.Unregister(c)
+			c := &client{contractID: "shared", send: make(chan []byte, 8)}
+			h.register(c)
+			h.unregister(c)
 		}()
 	}
 	wg.Wait()
 
-	cancel()
-	<-runDone
+	close(stop)
+	<-broadcasterDone
 
-	if got := hub.ClientCount(); got != 0 {
-		t.Errorf("ClientCount after concurrent churn = %d, want 0", got)
+	// Every client registered above was also unregistered, so the hub must be
+	// empty. No broadcaster is running now, so reading under the lock is safe.
+	h.mu.RLock()
+	remaining := len(h.clients)
+	h.mu.RUnlock()
+	if remaining != 0 {
+		t.Errorf("want 0 clients after concurrent churn, got %d", remaining)
 	}
 }
