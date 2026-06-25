@@ -327,6 +327,9 @@ mod tests {
 
     async fn seed_events(pool: &PgPool, contract_id: &str, count: usize) {
         for i in 0..count {
+            // Include contract_id in the tx hash so rows seeded for different
+            // contracts never share a (transaction_hash, event_index) pair and
+            // ON CONFLICT DO NOTHING silently drops them across test runs.
             sqlx::query(
                 r#"
                 INSERT INTO soroban_events
@@ -338,7 +341,7 @@ mod tests {
             )
             .bind(contract_id)
             .bind((100 + i) as i64)
-            .bind(format!("txhash{i}"))
+            .bind(format!("txhash_{contract_id}_{i}"))
             .bind(i as i32)
             .execute(pool)
             .await
