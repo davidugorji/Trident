@@ -227,7 +227,7 @@ curl https://your-domain.com/v1/health
      up -d --no-deps api indexer
    ```
 
-### `REDIS_URL` (password rotation)
+### `REDIS_PASSWORD`
 
 1. Update the Redis ACL or `requirepass` setting in your Redis config.
 2. Update `REDIS_URL` in `.env` to include the new password (e.g. `redis://:new-password@redis:6379`).
