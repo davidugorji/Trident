@@ -82,7 +82,9 @@ func main() {
 	// WebSocket: /ws — real-time event subscription endpoint (issue #15)
 	mux.HandleFunc("/ws", ws.Handler(hub))
 
-	handler := middleware.NewCORSFromEnv()(mux)
+	handler := middleware.NewCORSFromEnv()(
+		middleware.NewTimeoutFromEnv()(mux),
+	)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", port),
