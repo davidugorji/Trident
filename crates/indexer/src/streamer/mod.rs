@@ -96,8 +96,14 @@ impl Streamer {
     /// finishing the current `poll_once` before stopping (never mid-batch).
     pub async fn run(&mut self, shutdown: CancellationToken) -> Result<(), TridentError> {
         tracing::info!(network = %self.config.network, "Streamer started");
-        tracing::info!("[indexer] poll interval: {}ms", self.config.poll_interval.as_millis());
-        tracing::info!("[indexer] max events per poll: {}", self.config.max_events_per_poll);
+        tracing::info!(
+            "[indexer] poll interval: {}ms",
+            self.config.poll_interval.as_millis()
+        );
+        tracing::info!(
+            "[indexer] max events per poll: {}",
+            self.config.max_events_per_poll
+        );
 
         let mut cursor = db::get_cursor(&self.db).await?;
         tracing::info!(cursor, "Resuming from ledger cursor");

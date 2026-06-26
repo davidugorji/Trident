@@ -33,7 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // statement_cache_capacity(0) disables named prepared statements so the pool
     // is safe behind PgBouncer in transaction mode. See docs/deployment.md (#87).
-    let connect_options = PgConnectOptions::from_str(&cfg.database_url)?.statement_cache_capacity(0);
+    let connect_options =
+        PgConnectOptions::from_str(&cfg.database_url)?.statement_cache_capacity(0);
     let db_pool = PgPoolOptions::new()
         .max_connections(pool_size)
         .connect_with(connect_options)

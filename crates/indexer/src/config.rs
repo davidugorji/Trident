@@ -1,6 +1,7 @@
 use std::time::Duration;
 use trident_common::TridentError;
 
+#[derive(Debug)]
 pub struct Config {
     pub database_url: String,
     pub db_pool_size: u32,
@@ -95,11 +96,11 @@ fn parse_bounded_u64(key: &str, default: u64, min: u64, max: u64) -> Result<u64,
 fn parse_pool_size(key: &str, default: u32) -> Result<u32, TridentError> {
     match std::env::var(key) {
         Err(_) => Ok(default),
-        Ok(raw) => raw
-            .parse::<u32>()
-            .ok()
-            .filter(|&n| n > 0)
-            .ok_or_else(|| TridentError::ConfigError(format!("{key} must be a positive integer"))),
+        Ok(raw) => {
+            raw.parse::<u32>().ok().filter(|&n| n > 0).ok_or_else(|| {
+                TridentError::ConfigError(format!("{key} must be a positive integer"))
+            })
+        }
     }
 }
 
@@ -136,9 +137,15 @@ mod tests {
 
         let err = Config::from_env().unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("DATABASE_URL"), "error should mention DATABASE_URL");
+        assert!(
+            msg.contains("DATABASE_URL"),
+            "error should mention DATABASE_URL"
+        );
         assert!(msg.contains("REDIS_URL"), "error should mention REDIS_URL");
-        assert!(msg.contains("STELLAR_RPC_URL"), "error should mention STELLAR_RPC_URL");
+        assert!(
+            msg.contains("STELLAR_RPC_URL"),
+            "error should mention STELLAR_RPC_URL"
+        );
     }
 
     #[test]
@@ -152,7 +159,10 @@ mod tests {
         let err = Config::from_env().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("REDIS_URL"));
-        assert!(!msg.contains("DATABASE_URL"), "DATABASE_URL should not appear");
+        assert!(
+            !msg.contains("DATABASE_URL"),
+            "DATABASE_URL should not appear"
+        );
 
         env::remove_var("DATABASE_URL");
         env::remove_var("STELLAR_RPC_URL");

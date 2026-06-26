@@ -1,5 +1,6 @@
 use trident_common::TridentError;
 
+#[derive(Debug)]
 pub struct Config {
     pub database_url: String,
     pub grpc_addr: String,
