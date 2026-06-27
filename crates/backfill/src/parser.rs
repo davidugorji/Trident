@@ -94,7 +94,9 @@ fn parse_event_type(raw: &str) -> Result<EventType, TridentError> {
         "contract" => Ok(EventType::Contract),
         "system" => Ok(EventType::System),
         "diagnostic" => Ok(EventType::Diagnostic),
-        other => Err(TridentError::ParseError(format!("unknown event type: {other}"))),
+        other => Err(TridentError::ParseError(format!(
+            "unknown event type: {other}"
+        ))),
     }
 }
 
