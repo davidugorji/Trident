@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
+﻿use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::Value as Json;
 use stellar_strkey::{ed25519, Contract};
@@ -29,6 +29,7 @@ pub struct RawEvent {
 
 pub struct EventsPage {
     pub events: Vec<RawEvent>,
+    #[allow(dead_code)]
     pub latest_ledger: u64,
 }
 

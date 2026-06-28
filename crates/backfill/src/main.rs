@@ -64,10 +64,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.from_ledger, args.to_ledger
     ));
 
-    let (tx, mut rx) = mpsc::channel::<(u64, u64)>(args.workers * 2);
+    let (tx, rx) = mpsc::channel::<(u64, u64)>(args.workers * 2);
 
     // Split range into chunks for workers
-    let chunk_size = (total_ledgers as usize + args.workers - 1) / args.workers;
+    let chunk_size = (total_ledgers as usize).div_ceil(args.workers);
     let mut start = args.from_ledger;
     while start <= args.to_ledger {
         let end = std::cmp::min(start + chunk_size as u64 - 1, args.to_ledger);
@@ -145,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if let Some(last) = page.events.last() {
                                 if let Ok(last_seq) = last.ledger.parse::<u64>() {
                                     seq = last_seq + 1;
-                                    pb.inc((last_seq - s + 1) as u64);
+                                    pb.inc(last_seq - s + 1);
                                 } else {
                                     seq += 1;
                                     pb.inc(1);
