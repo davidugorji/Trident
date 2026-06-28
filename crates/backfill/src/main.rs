@@ -1,9 +1,9 @@
-use clap::Parser;
+﻿use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use sqlx::PgPool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::{sleep, Duration, Instant};
 use tracing_subscriber::EnvFilter;
 
@@ -83,14 +83,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "STELLAR_RPC_URL",
     )?));
 
+    let rx = Arc::new(Mutex::new(rx));
     let mut handles = vec![];
-    for _ in 0..args.workers {
-        let mut rx = rx.recv();
-    }
 
     // Spawn worker tasks
     for _ in 0..args.workers {
-        let mut rx = rx.clone();
+        let rx = Arc::clone(&rx);
         let rpc = rpc.clone();
         let db = db.clone();
         let parser = parser::Parser::new(false);
@@ -102,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rpc_delay = args.rpc_delay_ms;
 
         let handle = tokio::spawn(async move {
-            while let Some((s, e)) = rx.recv().await {
+            while let Some((s, e)) = rx.lock().await.recv().await {
                 tracing::info!(start = s, end = e, "Worker got range");
                 let mut page_cursor: Option<String> = None;
                 let mut seq = s;

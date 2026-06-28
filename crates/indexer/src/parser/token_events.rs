@@ -76,7 +76,12 @@ fn decode_set_authorized(topics: &[ScVal], data: &ScVal) -> Result<Json, String>
     let id = addr_topic(topics, 2, "set_authorized.id")?;
     let authorize = match data {
         ScVal::Bool(b) => *b,
-        other => return Err(format!("set_authorized.authorize expected Bool, got {}", scval_to_string(other))),
+        other => {
+            return Err(format!(
+                "set_authorized.authorize expected Bool, got {}",
+                scval_to_string(other)
+            ))
+        }
     };
     Ok(json!({ "event": "set_authorized", "admin": admin, "id": id, "authorize": authorize }))
 }
@@ -90,7 +95,10 @@ fn decode_increase_supply(topics: &[ScVal], data: &ScVal) -> Result<Json, String
 fn addr_topic(topics: &[ScVal], index: usize, field: &str) -> Result<String, String> {
     match topics.get(index) {
         Some(ScVal::Address(addr)) => Ok(scaddress_to_string(addr)),
-        Some(other) => Err(format!("{field}: expected Address, got {}", scval_to_string(other))),
+        Some(other) => Err(format!(
+            "{field}: expected Address, got {}",
+            scval_to_string(other)
+        )),
         None => Err(format!("{field}: topic[{index}] missing")),
     }
 }
@@ -98,7 +106,10 @@ fn addr_topic(topics: &[ScVal], index: usize, field: &str) -> Result<String, Str
 fn addr_scval(val: &ScVal, field: &str) -> Result<String, String> {
     match val {
         ScVal::Address(addr) => Ok(scaddress_to_string(addr)),
-        other => Err(format!("{field}: expected Address, got {}", scval_to_string(other))),
+        other => Err(format!(
+            "{field}: expected Address, got {}",
+            scval_to_string(other)
+        )),
     }
 }
 
@@ -109,7 +120,10 @@ fn i128_data(val: &ScVal, field: &str) -> Result<String, String> {
             let v = ((parts.hi as i128) << 64) | (parts.lo as i128);
             Ok(v.to_string())
         }
-        other => Err(format!("{field}: expected I128, got {}", scval_to_string(other))),
+        other => Err(format!(
+            "{field}: expected I128, got {}",
+            scval_to_string(other)
+        )),
     }
 }
 
@@ -124,7 +138,8 @@ mod tests {
 
     fn xdr_b64(val: &ScVal) -> String {
         let mut buf = Vec::new();
-        val.write_xdr(&mut Limited::new(&mut buf, Limits::none())).expect("XDR encode");
+        val.write_xdr(&mut Limited::new(&mut buf, Limits::none()))
+            .expect("XDR encode");
         STANDARD.encode(buf)
     }
 
@@ -143,7 +158,10 @@ mod tests {
     }
 
     fn i128_val(v: i128) -> ScVal {
-        ScVal::I128(Int128Parts { hi: (v >> 64) as i64, lo: v as u64 })
+        ScVal::I128(Int128Parts {
+            hi: (v >> 64) as i64,
+            lo: v as u64,
+        })
     }
 
     #[test]
@@ -226,7 +244,8 @@ mod tests {
 
     #[test]
     fn unknown_event_name_returns_none() {
-        assert!(try_decode_token_event(&[sym("custom_event"), account_addr(1)], &ScVal::Void).is_none());
+        let topics = vec![sym("custom_event"), account_addr(1)];
+        assert!(try_decode_token_event(&topics, &ScVal::Void).is_none());
     }
 
     #[test]
