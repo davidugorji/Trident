@@ -26,8 +26,7 @@ use trident_common::TridentError;
 use crate::{
     alerting::{AlertContext, Alerter},
     config::Config,
-    db,
-    metrics,
+    db, metrics,
     parser::Parser,
     redis_stream,
     rpc::RpcClient,
